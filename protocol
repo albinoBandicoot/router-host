@@ -1,0 +1,137 @@
+The following GCODE commands will be supported:
+
+G1 - controlled move
+	G1 X2.365 Y14.992 Z1.042 F3.500
+	
+	coordinates are absolute, and are given in mm. Feedrates are mm/sec.
+	For transmission, coordinates are translated into 16-bit fixed point, 
+	where each unit is 0.01mm. 
+
+G4 - wait
+	G4 M3	- wait until 'resume' button is pressed on console. Will send
+				an indication of the argument back to the host, so that 
+				an appropriate message can be displayed (change tool, etc)
+
+	G4 S5	- wait 5 seconds
+	G4 P300	- wait 300 milliseconds
+
+G28 - home axes
+	G28			- home all axes
+	G28 X0 Y0	- home just the X and Y axes
+
+G92 - set position
+	G92 X30 Y45.24 Z0.0
+
+	Sets where the router thinks it is. CAREFUL: software max endstops 
+	will end up in different locations! In particular, you can go past
+	where they should be.
+
+M0 - stop:  when this command is executed, spindle power is shut down, the 
+			Z axis is homed, and then steppers are disabled. This is the 
+			'graceful stop.' This actually expands to multiple commands:
+				SPINDLE OFF; HOME Z; STEPPERS OFF;
+
+M1 - echo
+
+M17 - enable steppers
+M18 - disable steppers
+
+M112 - emergency stop
+
+		When the 'opcode' for this command comes in off the serial port,
+		the motion timer is stopped and the spindle and stepper power is 
+		cut immediately. Of course, in a real emergency, hit the physical
+		estop button.
+
+M114 - get current position
+M119 - get endstop status
+
+		Return a byte with 00000ZYX endstop status info.
+
+M300 - beep
+	M300 S500 P100	- Play 500Hz beep for 100ms
+
+(M566 - axis compensation (to account for non-squareness))
+
+
+Protocol and operation representation:
+--------------------------------------
+
+Commands are fixed length. They consist of a 1-byte opcode, then a 1-byte ID number
+that is used in the ACK and retransmission requests, followed by data,
+then a final 1-byte checksum, obtained by XORing the preceeding bytes together.
+
+When a command is received, the checksum is computed locally and compared against
+the transmitted value. If they differ, a retransmit is requested. If the ID number
+of the received command is not 1 greater than the previous (mod 256), a retransmit
+is also requested. If an incomplete command is received, after a certain timeout
+interval, a retransmit will be requested.
+
+No processing takes place until a full command has been read, with the exception
+of the emergency stop (M112) command: if its opcode is read as the first byte of 
+a command, it takes effect immediately. 
+
+The largest commands need 4 position/speeds, which are 16 bits each. Hence the data
+section needs to be 8 bytes long. So a whole command is 11 bytes:
+
+[ OPCODE | ID | data0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | CHECKSUM ]
+
+Upon receiving a command, if the buffer is not full, an acknowledgement is sent back 
+to the host. If the buffer is full, the acknowledgement is witheld until a command 
+completes (freeing up a slot in the buffer). In this way the acknowledgement also 
+serves as a signal that another command may be sent.
+
+The acknowledgement is two bytes: ASCII 'a' (for acknowledge), and then the ID number
+of the command, just for sanity checking's sake. 
+
+Commands that generate a response from the router start with an ASCII 'r' for 'response'
+followed by the ID number of the command, then a 1-byte length, and finally the data.
+
+A retransmit request is accomplished by sending 'tx'. 
+
+COMMANDS
+--------
+
+0 - NOP
+1 - MOVE 
+			Takes 4 2-byte fixed point parameters: X, Y, Z positions and feedrate.
+
+2 - HOME	
+			Takes a 1-byte mask selecting axes (00000ZYX)
+
+3 - STEPPERS ON/OFF
+			Takes a boolean (1 = enable, 0 = disable)
+
+4 - SPINDLE ON/OFF
+			Takes a boolean (1 = enable, 0 = disable)
+
+5 - WAIT
+			Takes a 16-bit number of milliseconds. 
+
+6 - PAUSE
+			Wait until 'resume' is pressed. Takes a 1-byte marker/message number.
+
+7 - BEEP
+			First parameter: 2 byte frequency in Hz
+			Second parameter: 2 byte duration in ms
+
+8 - SET POSITION
+			Takes 3 2-byte fixed point parameters: X, Y, Z positions.
+
+9 - GET POSITION
+			No parameters. 
+			Response: 6 bytes: X, Y, Z positions as 16-bit fixed point.
+
+10 - GET ENDSTOP STATUS
+			No parameters.
+			Response: 1 byte: 00000ZYX endstop status.
+
+11 - GET SPINDLE SPEED
+			No parameters.
+			Response: 2 byte integer, range 0-1024 (output from ADC on spindle pot)
+
+16 - ECHO
+			Parameters: up to 8 bytes to be echoed. 
+			Response: The parameter bytes, except for trailing 0s. 
+
+255 - EMERGENCY STOP
