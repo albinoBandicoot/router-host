@@ -7,6 +7,10 @@ G1 - controlled move
 	For transmission, coordinates are translated into 16-bit fixed point, 
 	where each unit is 0.01mm. 
 
+G2 - relative move
+
+	same as G1, but coordinates are relative to curent position.
+
 G4 - wait
 	G4 M3	- wait until 'resume' button is pressed on console. Will send
 				an indication of the argument back to the host, so that 
@@ -51,8 +55,6 @@ M119 - get endstop status
 M300 - beep
 	M300 S500 P100	- Play 500Hz beep for 100ms
 
-(M566 - axis compensation (to account for non-squareness))
-
 
 Protocol and operation representation:
 --------------------------------------
@@ -89,44 +91,53 @@ followed by the ID number of the command, then a 1-byte length, and finally the 
 
 A retransmit request is accomplished by sending 'tx'. 
 
+If something has caused the router to abort (e.g. hit an endstop during a move, or
+executed an ESTOP command), it will send 'A' to the host. When it aborts, it will 
+stop steppers and spindle, clear its command buffers, and ignore all serial 
+communication until the resume button is pressed. It will then send 'C' to the host. 
+
 COMMANDS
 --------
 
 0 - NOP
-1 - MOVE 
+1 - ABSOLUTE MOVE 
 			Takes 4 2-byte fixed point parameters: X, Y, Z positions and feedrate.
 
-2 - HOME	
+2 - RELATIVE MOVE
+			Takes 4 2-byte fixed point parameters; target is relative to current location. 
+			Feedrate is absolute.
+
+3 - HOME	
 			Takes a 1-byte mask selecting axes (00000ZYX)
 
-3 - STEPPERS ON/OFF
+4 - STEPPERS ON/OFF
 			Takes a boolean (1 = enable, 0 = disable)
 
-4 - SPINDLE ON/OFF
+5 - SPINDLE ON/OFF
 			Takes a boolean (1 = enable, 0 = disable)
 
-5 - WAIT
+6 - WAIT
 			Takes a 16-bit number of milliseconds. 
 
-6 - PAUSE
+7 - PAUSE
 			Wait until 'resume' is pressed. Takes a 1-byte marker/message number.
 
-7 - BEEP
+8 - BEEP
 			First parameter: 2 byte frequency in Hz
 			Second parameter: 2 byte duration in ms
 
-8 - SET POSITION
+9 - SET POSITION
 			Takes 3 2-byte fixed point parameters: X, Y, Z positions.
 
-9 - GET POSITION
+10 - GET POSITION
 			No parameters. 
 			Response: 6 bytes: X, Y, Z positions as 16-bit fixed point.
 
-10 - GET ENDSTOP STATUS
+11 - GET ENDSTOP STATUS
 			No parameters.
 			Response: 1 byte: 00000ZYX endstop status.
 
-11 - GET SPINDLE SPEED
+12 - GET SPINDLE SPEED
 			No parameters.
 			Response: 2 byte integer, range 0-1024 (output from ADC on spindle pot)
 

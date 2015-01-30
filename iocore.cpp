@@ -1,32 +1,107 @@
 #include "iocore.h"
+#include "host.h"
 using namespace std;
 
 static int spfd = -1;
 static vector<command_t> cmd;
 static deque<command_t> sent;
+static deque<command_t> manual_cmd;
 
 static uchar response_buffer[256];
 static int response_len = 0;
 static int response_id = 0;
 
-static bool running = true;
+static bool running = false;
+int connection = DISCONNECTED;
 static int pos = 0;
 
-bool iocore_init () {
-	spfd = serialport_init (SERIAL_PORT_NAME, BAUDRATE);
-	sleep (1);	// wait for connection to be established.
-	return spfd != -1;
+pthread_mutex_t iomutex;
+pthread_t iothread;
+
+void iocore_init () {
+	pthread_mutex_init (&iomutex, NULL);
+	pthread_create (&iothread, NULL, iocore_mainloop, NULL);
+}
+
+void iocore_connect () {
+	if (connection == DISCONNECTED) {
+		connection = PENDING;
+	}
+}
+
+void iocore_disconnect () {
+	if (connection == CONNECTED) {
+		if (!running) {
+			connection = DISCONNECTED;
+			serialport_close (spfd) == 0;
+		} else {
+			console_append ("Can't disconnect while running.");
+		}
+	} else {
+		console_append ("Already disconnected.");
+	}
 }
 
 void iocore_load (vector<command_t> c) {
-	cmd = c;
-	pos = 0;
-	running = true;
+	if (!running) {
+		cmd = c;
+		pos = 0;
+	}
+}
+
+void iocore_run_auto () {
+	if (connection != CONNECTED) {
+		console_append ("Must connect to router first.");
+		return;
+	}
+	if (cmd.empty()) {
+		console_append ("No commands loaded.");
+		return;
+	}
+	if (!running) {
+		pos = 0;
+		running = true;
+	}
+}
+
+bool iocore_run_manualv (vector<command_t> c) {
+	if (running) {
+		console_append ("Can't run manual commands while job is running");
+		return false;
+	}
+	if (connection == CONNECTED) {
+	//	pthread_mutex_lock (&iomutex);
+		for (int i=0; i < c.size(); i++) {
+			manual_cmd.push_back (c[i]);
+		}
+	//	pthread_mutex_unlock (&iomutex);
+		return true;
+	} else {
+		console_append ("Must connect to the router first!");
+	}
+	return false;
+}
+
+bool iocore_run_manual (command_t c) {
+	printf ("iocore was asked to run the command: \n");
+	cmd_println (c);
+	if (running) {
+		console_append ("Can't run manual commands while job is running");
+		return false;
+	}
+	if (connection == CONNECTED) {
+		pthread_mutex_lock (&iomutex);
+		manual_cmd.push_back (c);
+		pthread_mutex_unlock (&iomutex);
+		return true;
+	} else {
+		console_append ("Must connect to the router first!");
+	}
+	return false;
 }
 
 void send_command (command_t c) {
-	printf ("Sending command: ");
-	cmd_println (c);
+	if (CONSOLE_SEND) console_append (string ("Sending command: " + cmd_getstring (c)));
 
 	serialport_write (spfd, &c.bytes, COM_SIZE);
 	sent.push_front (c);
@@ -38,40 +113,48 @@ void send_command (command_t c) {
 static int state = IDLE;
 static int substate = 0;
 
-void iocore_run () {
-/*
-	uchar x = 0;
+void *iocore_mainloop (void *arg) {
 	char inp;
-	while (true) {
-		printf ("Writing %d\n", x);
-		serialport_write (spfd, &x, 1);
-		//tcflush (spfd, TCIOFLUSH);
-		int n = 1;
-		while (n > 0) {
-			n = serialport_read (spfd, &inp);
-			if (n > 0) {
-				printf ("RECV: %d\n", inp);
-			}
-		}
-		sleep (1);
-		x++;
-	}
+	int n;
 
-}
-*/
-//	send_command (cmd[0]);
-//	pos = 1;
-	char inp;
-	while (serialport_read (spfd, &inp) <= 0) {
-		char x = 1;
-		printf ("ping\n");
-		serialport_write (spfd, &x, 1);
-		sleep (1);
-	}
-	
-	printf ("Recv: %c (%d)\n", inp, inp);
-	int n = 1;
 	while (true) {
+		if (connection == DISCONNECTED) {
+			usleep (1000 * 250);
+			continue;
+		}
+		if (connection == PENDING) {
+			spfd = serialport_init (SERIAL_PORT_NAME, BAUDRATE);
+			if (spfd == -1) {
+				console_append ("Couldn't open serial port.");
+				connection = DISCONNECTED;
+				connect.setText ("Connect");
+				continue;
+			}
+			sleep (1);
+
+			while (serialport_read (spfd, &inp) <= 0) {
+				char x = 1;
+				if (CONSOLE_PING) console_append (string ("ping"));
+				serialport_write (spfd, &x, 1);
+				sleep (1);
+			}
+			n = 1;
+			connect.setText ("Disconnect");
+			connection = CONNECTED;
+
+			printf ("Connected\n");
+		}
+		if (!running && !manual_cmd.empty()) {
+			send_command (manual_cmd[0]);
+			manual_cmd.pop_front();
+		}
+		if (running && pos == 0) {	// send first command, since there will be no preceeding ack, in general.
+			printf ("Sending first command in auto mode\n");
+			send_command (cmd[0]);
+			pos++;
+		}
+
+
 		if (n > 0) {
 			printf ("Recv: %c (%d)\n", inp, inp);
 			
@@ -83,19 +166,38 @@ void iocore_run () {
 						state = RETRANSMIT;	substate = 1;	break;
 					case 'r':
 						state = RESPONSE; substate = 1; break;
+					case 'A':
+						state = ABORT;	
+						console_append ("Endstop or maximum coordinate hit during move! Press resume button");	break;
 					default:
-						printf ("Unexpected!\n");
+						console_append ("Unexpected byte received!");
+						printf ("Unexpected byte received: %c (%d)\n", inp, inp);
 				}
 			} else if (state == ACK) {
-				printf ("ACK %d\n", inp);
+				if (CONSOLE_ACK) {
+					char s[10];
+					sprintf (s, "ACK %d", inp);
+					console_append (string (s));
+				}
 				state = IDLE;
 				substate = 0;
-				if (running && pos < cmd.size()) {
-					send_command (cmd[pos++]);
+				if (running) {
+				   	if (pos < cmd.size()) {
+						send_command (cmd[pos++]);
+					} else {
+						printf ("COmmands exhaiusted. Running = false\n");
+						running = false;
+					}
+				} else {
+					if (!manual_cmd.empty()) {
+						send_command (manual_cmd[0]);
+						manual_cmd.pop_front();
+					}
 				}
 
 			} else if (state == RESPONSE) {
 				if (substate == 1) {
+					response_id = inp;
 					memset (response_buffer, 0, 256);
 				} else if (substate == 2) {
 					response_len = inp;
@@ -112,10 +214,14 @@ void iocore_run () {
 				if (inp == 'x') {
 					retransmit();
 				} else {
-					printf ("Expecting 'x' after 't' for retransmit\n");
+					console_append ("Expecting 'x' after 't' for retransmit\n");
 				}
 				state = IDLE;
 				substate = 0;
+			} else if (state == ABORT) {
+				if (inp == 'C') {
+					state = IDLE;
+				}
 			}
 		}
 		usleep (1000);
@@ -124,13 +230,14 @@ void iocore_run () {
 }
 
 void retransmit () {
-	printf ("Retransmitting command: ");
+	console_append ("Retransmitting command");
 	cmd_println (sent[0]);
+
 	serialport_write (spfd, &(sent[0].bytes), 11);
 }
 
 uint16_t get16 (int idx) {
-	return ((uint16_t) response_buffer[idx*2]) << 8 + response_buffer[idx*2+1];
+	return (((uint16_t) response_buffer[idx*2]) << 8) + response_buffer[idx*2+1];
 }
 
 void print_response () {
@@ -144,28 +251,28 @@ void print_response () {
 	}
 	comtype_t ct;
 	if (idx == -1) {
-		ct = (comtype_t) 16;
+		ct = ECHO;
 	} else {
 		ct = (comtype_t) sent[idx].bytes[0];
 	}
 
-	printf ("Response to %d\n", idx);
+	printf ("Response to %d\n", response_id);
 	uchar r0 = response_buffer[0];
+	char buf[200];
 	switch (ct) {
 		case GET_POSITION:
-			printf ("X: %f   Y: %f   Z: %f\n", get16(1) * 0.01f, get16(2) * 0.01f, get16(3) * 0.01f);
+			sprintf (buf, "X: %f   Y: %f   Z: %f", get16(0) * 0.01f, get16(1) * 0.01f, get16(2) * 0.01f);
 			break;
 		case GET_ENDSTOPS:
-			printf ("Endstops: X: %d  Y: %d  Z: %d\n", r0 & 1, (r0 & 2) >> 1, (r0 & 4) >> 2);
+			sprintf (buf, "Endstops: X: %d  Y: %d  Z: %d", r0 & 1, (r0 & 2) >> 1, (r0 & 4) >> 2);
 			break;
 		case GET_SPINDLE_SPEED:
-			printf ("Spindle speed: %d rpm\n", (int) (SP_SPEED_MIN + (get16(1) / 1024.0f) * (SP_SPEED_MAX - SP_SPEED_MIN)));
+			sprintf (buf, "Spindle speed: %d rpm", (int) (SP_SPEED_MIN + (get16(1) / 1024.0f) * (SP_SPEED_MAX - SP_SPEED_MIN)));
 			break;
 		case ECHO:
 		default:
-			for (int i=0; i < response_len; i++) {
-				putchar (response_buffer[i]);
-			}
-			putchar ('\n');
+			response_buffer[response_len] = 0;	// ensure we have null-termination
+			sprintf (buf, "ECHO: %s", response_buffer);
 	}
+	console_append (string (buf));
 }
