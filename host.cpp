@@ -107,7 +107,7 @@ void setup_gui () {
 	feedrates.add (&feed_fast);
 
 	root.add (&xyz);
-	root.add (&positions);
+	//root.add (&positions);
 	root.add (&topbar);
 	root.add (&gcode_input);
 	root.add (&gcode_input_label);

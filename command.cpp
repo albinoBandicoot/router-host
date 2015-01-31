@@ -68,7 +68,7 @@ int err = 0;
 void warning (int line, const char *message) {
 	console_append (string("Warning! ") + message);
 	fprintf (stderr, "Warning in line %d: %s\n", line, message);
-	err++;
+	//err++;
 }
 
 void error (int line, const char *message) {
@@ -246,9 +246,9 @@ vector<command_t> parse_gcode (char *s, Textscroller *gcode) {
 					}
 					s += strspn (s, " \t");
 				}
-				if (freq < 32) {
-					warning (line, "Beep with frequency less than 32 Hz unsupported. Using 32 Hz");
-					freq = 32;
+				if (freq > 15000) {
+					warning (line, "Beep with frequency greater than 15000 Hz unsupported. Using 15 KHz.");
+					freq = 15000;
 				}
 				cmd.push_back (cmd_init2s (BEEP, id, freq, len));
 			} else {	//error
