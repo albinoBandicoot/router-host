@@ -21,7 +21,7 @@ G4 - wait
 
 G28 - home axes
 	G28			- home all axes
-	G28 X0 Y0	- home just the X and Y axes
+	G28 XY		- home just the X and Y axes
 
 G92 - set position
 	G92 X30 Y45.24 Z0.0

@@ -3,6 +3,20 @@
 #include <climits>
 using namespace std;
 
+/* A command is COM_SIZE (currently 11) bytes. 
+*  The first byte is the "opcode" signifying which command this is (move, wait, etc.)
+*  The second byte is a command ID number.
+*  Then come 8 bytes of data. Not all commands utilize all of this space.
+*  Finally the last byte is the checksum, which is just the XOR of all of the first 10 bytes.
+*/
+
+/* ACHTUNG! multi-byte fields are stored in a command in BIG ENDIAN order, which is probably
+* a poor choice considering most computers (including the Arduino) are little endian. But 
+* that's the way I did it and it does work. Things could be made a little cleaner on the 
+* firmware end by changing this, though on the host end it's good to set the individual bytes
+* explicitly to maintain portability if this code is run on a big endian system */
+
+// compute the checksum for 'c' and store it in its last byte
 void checksum (command_t *c) {
 	char cs = 0;
 	for (int i=0; i < COM_SIZE-1; i++) {
@@ -11,6 +25,10 @@ void checksum (command_t *c) {
 	c->bytes[COM_SIZE-1] = cs;
 }
 
+/* These are various functions for initializing a command_t. They correspond to the various
+*  arrangements of data that occur for different command types. */
+
+// initialize a command with no data - just a opcode, id, and checksum.
 command_t cmd_init (char op, char id) {
 	command_t c;
 	memset (c.bytes, 0, COM_SIZE);
@@ -20,6 +38,7 @@ command_t cmd_init (char op, char id) {
 	return c;
 }
 
+// create a command with one byte of data
 command_t cmd_initb (char op, char id, char b) {
 	command_t c = cmd_init (op, id);
 	c.bytes[2] = b;
@@ -27,6 +46,7 @@ command_t cmd_initb (char op, char id, char b) {
 	return c;
 }
 
+// create a command with one 2-byte integer field. 
 command_t cmd_inits (char op, char id, unsigned short x) {
 	command_t c = cmd_init (op, id);
 	c.bytes[2] = x >> 8;
@@ -35,6 +55,7 @@ command_t cmd_inits (char op, char id, unsigned short x) {
 	return c;
 }
 
+// create a command with two 2-byte integer fields.
 command_t cmd_init2s (char op, char id, unsigned short x, unsigned short y) {
 	command_t c = cmd_init (op, id);
 	c.bytes[2] = x >> 8;
@@ -45,6 +66,16 @@ command_t cmd_init2s (char op, char id, unsigned short x, unsigned short y) {
 	return c;
 }
 
+/* create a command with four 2-byte fixed point (integer) fields computed
+* from four floating point values. This compaction is probably unnecessary,
+* though it does nearly halve the amount of data that must be transmitted over
+* the serial port. 
+*
+* The floating point values are in mm (or mm/sec for feeds). To compute the fixed
+* point values, multiply by 100 and convert to an integer. This gives a resolution
+* of 0.01mm and a representable range of from 0 to 655.36mm (or from -327.68 to +327.67
+* mm for relative moves)
+*/
 command_t cmd_init4f (char op, char id, float x, float y, float z, float f) {
 	command_t c = cmd_init (op, id);
 	uint16_t xi = (uint16_t) (x*100);
@@ -63,37 +94,46 @@ command_t cmd_init4f (char op, char id, float x, float y, float z, float f) {
 	return c;
 }
 
-int err = 0;
+/* Now for the Gcode parsing. This will take a string and attempt to convert it
+* into a list of command_t. */
 
+int err = 0;	// a count of the number of errors on the most recent call to parse_gcode
+
+// output a warning message to stderr and to the console in the GUI
 void warning (int line, const char *message) {
 	console_append (string("Warning! ") + message);
 	fprintf (stderr, "Warning in line %d: %s\n", line, message);
 	//err++;
 }
 
+// output an error message to stderr and to the console in the GUI
 void error (int line, const char *message) {
 	console_append (string("Error! ") + message);
 	fprintf (stderr, "ERROR in line %d: %s\n", line, message);
 	err++;
 }
 
+// the main parsing routine. It's a bit of a mess of pointer manipulation and 
+// calls to C library routines with names with no vowels like strspn and strchr
+
+// the Textscroller parameter is used to update the display of the currently 
+// loaded gcode. If NULL is passed it will be ignored.
 vector<command_t> parse_gcode (char *s, Textscroller *gcode) {
 	err = 0;
 	vector<command_t> cmd;
 
-	float x, y, z, f;
+	float x, y, z, f;	// keeps track of the current position and feedrate
 	x = y = z = f = 0;
 
-	char *ssave = s;
-	char *end = s + strlen(s);
-	char *lbp;
+	char *end = s + strlen(s);	// points to the end of the input string
+	char *lbp;	// linebreak pointer - will point to the end of the current line
 	int line = 0;
 	uchar id = 0;
 	do {
 		line++;
 		id = cmd.size();
-		lbp = strchr (s, '\n');
-		if (lbp == NULL) lbp = end;
+		lbp = strchr (s, '\n');	// find the next newline
+		if (lbp == NULL) lbp = end;	// if not found, set the end of the current line to the end of the input string
 
 		if (gcode != NULL) {
 			gcode->append_line (string (s, (size_t) (lbp-s)));
@@ -254,7 +294,7 @@ vector<command_t> parse_gcode (char *s, Textscroller *gcode) {
 			} else {	//error
 				error (line, "Unrecognized M-number.");
 			}
-		} else if (*s == ';') {
+		} else if (*s == ';') {	// semicolon indicates comments
 		} else {
 			if (lbp != end) {
 				error (line, "Lines should start with 'G' or 'M'");

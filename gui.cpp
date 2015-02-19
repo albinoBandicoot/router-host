@@ -4,6 +4,20 @@ bool Rect::contains (int px, int py) {
 	return px >= x && px < x+w && py >= y && py < y+h;
 }
 
+Image::Image (FILE *f) {
+	fread (&mode, 2, 1, f);
+	fread (&xsize, 2, 1, f);
+	fread (&ysize, 2, 1, f);
+
+	unsigned int datalen;
+	fread (&datalen, 4, 1, f);
+	bpp = datalen / (xsize * ysize);
+
+	data = malloc (datalen);
+	fread (data, bpp, xsize*ysize, f);
+	fclose (f);
+}
+
 // Component functions
 
 void Component::render () {

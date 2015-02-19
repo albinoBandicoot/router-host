@@ -13,6 +13,17 @@ using namespace std;
 
 /* Class definitions */
 
+class Image {	// this is here solely to get the image of the piglet necromancer to display for the first 2 seconds after the host starts 
+	public:
+		int xsize, ysize;
+		int mode;
+		int bpp;	// bytes per pixel
+		void *data;
+
+		Image (FILE *);
+
+};
+
 class Rect {
 	public:
 		int x, y, w, h;
@@ -22,6 +33,7 @@ class Rect {
 		bool contains (int, int);
 };
 
+// ancestor class of all GUI components
 class Component {
 	public:
 		Component *parent;
@@ -37,6 +49,9 @@ class Component {
 		virtual void keypress (unsigned char c) {}
 };
 
+// containers offer a means of grouping components together. Child components of a container
+// have coordinates relative to the origin of their container. This allows for ease of moving
+// around large numbers of grouped components.
 class Container : public Component {
 	public:
 		vector<Component *> children;
@@ -86,6 +101,7 @@ class Button : public Component {
 		}
 };
 
+// buttongroups are a set of buttons of which only one can be pressed at a time
 class Buttongroup : public Component {
 	public:
 		vector<Button *> buttons;
@@ -149,6 +165,7 @@ class Label : public Component {
 		}
 };
 
+// scrolling text display. Does not support editing.
 class Textscroller : public Component {
 	public:
 		deque<string> lines;
@@ -177,6 +194,6 @@ class Textscroller : public Component {
 
 };
 
-extern Component *focus;
+extern Component *focus;	// which component has keyboard focus
 
 #endif

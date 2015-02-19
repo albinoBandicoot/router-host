@@ -8,12 +8,14 @@
 #include <vector>
 #include <deque>
 
+// possible states of the communication
 #define IDLE 0
 #define ACK 1
 #define RESPONSE 2
 #define RETRANSMIT 3
 #define ABORT 4
 
+// possible states of the connection
 #define DISCONNECTED 0
 #define PENDING 1
 #define CONNECTED 2

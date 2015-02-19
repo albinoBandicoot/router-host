@@ -7,11 +7,10 @@ using namespace std;
 pthread_mutex_t redisplay_mut;
 pthread_cond_t redisplay_cond;
 
-/* GUI COMPONENTS */
 int WIN_XS = DEFAULT_WIN_XS;
 int WIN_YS = DEFAULT_WIN_YS;
 
-// button callbacsk
+// button callbacks
 void moveaxis_callback (Component *c, int b, int s);
 void homeaxis_callback (Component *c, int b, int s);
 void load_callback (Component *c, int b, int s);
@@ -20,6 +19,7 @@ void run_callback (Component *c, int b, int s);
 void estop_callback (Component *c, int b, int s);
 void gcode_entry_callback (Textfield *tf);
 
+/* GUI COMPONENTS */
 Container root (Rect(0,0,WIN_XS,WIN_YS));
 
 Container xyz (Rect (WIN_XS - 320, WIN_YS - 220, 300, 200));
@@ -118,6 +118,8 @@ void setup_gui () {
 
 }
 
+// whenever the window size changes, this is called to move components around whose
+// positions or sizes depend on the size of the window.
 void do_layout () {
 	xyz.setBounds (Rect (WIN_XS - 320, 100, 300, 200));
 	console.setBounds (Rect (10, 500, WIN_XS-20, WIN_YS-510));
@@ -128,8 +130,11 @@ void do_layout () {
 	feedrates.setBounds (Rect (WIN_XS - 320, 340, 300, 25));
 }
 
+// this is called whenever one of the axis motion buttons is pressed. The button
+// that caused this callback to run is passed in 'c' 
 void moveaxis_callback (Component *c, int b, int s) {
-	if (s == GLUT_UP) return;
+	if (s == GLUT_UP) return;	// only do stuff on the press, not the release
+	// now look at what length and feedrate options are selected
 	int sel = move_amounts.selected;
 	if (sel == -1) {
 		console_append ("Please select an amount to move.");
@@ -158,6 +163,7 @@ void moveaxis_callback (Component *c, int b, int s) {
 	}
 }
 
+// same deal for homing
 void homeaxis_callback (Component *c, int b, int s) {
 	if (s == GLUT_UP) return;
 	if (c == &xhome) {
@@ -171,6 +177,7 @@ void homeaxis_callback (Component *c, int b, int s) {
 	}
 }
 
+// parse and run the gcode command typed in the textfield
 void gcode_entry_callback (Textfield *tf) {
 	console_append (tf->text);
 	vector<command_t> cmd = parse_gcode ((char *) (tf->text.c_str()), NULL);
@@ -182,6 +189,7 @@ void gcode_entry_callback (Textfield *tf) {
 	}
 }
 
+// try to load and parse the gcode file specified by the filename textfield
 void load_callback (Component *c, int b, int s) {
 	if (s == GLUT_UP) return;
 
@@ -216,6 +224,8 @@ void load_callback (Component *c, int b, int s) {
 
 static const string constrings[3] = {"Connect", "Connecting...", "Disconnect"};
 
+// handle connecting/disconnecting to/from the router, and changing the text on the 
+// button to reflect the current status
 void connect_callback (Component *c, int b, int s) {
 	printf ("Connect pressed; status = %d\n", s);
 	if (s == GLUT_UP) {
@@ -231,28 +241,50 @@ void connect_callback (Component *c, int b, int s) {
 	connect.setText (constrings[connection]);
 }
 
+// try to start the job running when the run button is pressed
 void run_callback (Component *c, int b, int s){
 	if (s == GLUT_UP) return;
 	iocore_run_auto ();
 }
 
 void estop_callback (Component *c, int b, int s){
+// TODO: implement this
 }
 
+// make a message appear on the console (the one in the GUI and also on the terminal)
 void console_append (string str) {
 	cout << str << endl;
-	console.scrollpos = max (0, (int) (console.lines.size() + 1 - console.display_lines));
+	console.scrollpos = max (0, (int) (console.lines.size() + 1 - console.display_lines));	// autoscroll to the end
 	console.append_line (str);
-	pthread_cond_signal (&redisplay_cond);
+	pthread_cond_signal (&redisplay_cond);	// magic
 }
 
+bool splashing = true;
+Image splash (fopen("splash.8888", "r"));
+
+/* This is a callback registered with GLUT, which will be called whenever the window needs to 
+* be repainted - this could either be caused by something like a window resize event, or minimizing
+* and then maximizing the window, or more commonly, by the program's request through glutPostRedisplay(),
+* which lets GLUT know that things have changed and it needs to redraw the window */
 void display () {
 	glClear (GL_COLOR_BUFFER_BIT);
+	if (splashing) {	// handle drawing the splash image. 
+		splashing = false;
+		glRasterPos3f ((WIN_XS - splash.xsize)/2, splash.ysize + (WIN_YS - splash.ysize)/2 ,0);
+		glDrawPixels (splash.xsize, splash.ysize, GL_RGBA, splash.mode, splash.data);
+		glutSwapBuffers();
+		sleep(3);
+		glutPostRedisplay();
+		return;
+	}
 	glColor3f (1.0f, 1.0f, 1.0f);
-	root.render();
+	root.render();	// calling the render method on the root component will cause it to draw all of its children
 	glutSwapBuffers();
 }
 
+// GLUT mouse callback - this mostly just dispatches to the mouse callbacks of the clicked-on component. 
+// Mouse wheel events are also reported through this same callback, with different button numbers. We want
+// to interpret these as up/down scroll events when a Textscroller has keyboard focus.
 void mouse (int button, int state, int x, int y) {
 	focus = root.clicked (button, state, x, y);
 	if (state == GLUT_DOWN && (button == 3 || button == 4)) {	// mouse wheel
@@ -265,6 +297,7 @@ void mouse (int button, int state, int x, int y) {
 	glutPostRedisplay();	// focus change affects rendering
 }
 
+// GLUT keyboard callback - dispatches to focused component's keypress callback.
 void key (unsigned char key, int x, int y) {
 	printf ("focus = %p\n", focus);
 	if (focus != NULL) {
@@ -273,6 +306,9 @@ void key (unsigned char key, int x, int y) {
 	printf ("Done with key callback\n");
 }
 
+// GLUT callback that gets called when the window changes size. This lets us do some 
+// magic with the view matrix to make things work, and call do_layout()to rearrange our
+// components.
 void resize (int wd, int ht) {
 	WIN_XS = wd;
 	WIN_YS = ht;
@@ -285,6 +321,12 @@ void resize (int wd, int ht) {
 	do_layout();
 }
 
+/* This is called when GLUT is bored. This currently contains some black magic that 
+*  is required because GLUT doesn't like threads: calling glutPostRedisplay() from 
+*  a different thread than glutInit was called from will not work. This means console
+*  messages from the I/O thread will not appear until something from the main GUI thread
+*  causes a redisplay to happen, which is bad. This uses a condition variable to do
+*  the inter-thread signalling. */
 void idle () {
 	struct timespec timeout;
 	timeval curr_time;
@@ -299,6 +341,9 @@ void idle () {
 }
 
 int main (int argc, char** argv) {
+
+/* Set up the GUI components and do all of the GLUT initialization */
+
 	setup_gui();
 	pthread_cond_init (&redisplay_cond, NULL);
 	pthread_mutex_init (&redisplay_mut, NULL);
@@ -311,12 +356,14 @@ int main (int argc, char** argv) {
 
 	int win = glutCreateWindow ("Router Host");
 
+	// register GLUT callbacks
 	glutDisplayFunc (display);
 	glutMouseFunc (mouse);
 	glutReshapeFunc (resize);
 	glutKeyboardFunc (key);
 	glutIdleFunc (idle);
 
+	// set up the viewport transformation matrix
 	glViewport (0, 0, WIN_XS, WIN_YS);
 	glMatrixMode (GL_PROJECTION);
 	glLoadIdentity ();
@@ -325,5 +372,5 @@ int main (int argc, char** argv) {
 
 	console.append_line ("Welcome to Router Host 1.0 - Piglet Necromancer");
 
-	glutMainLoop();
+	glutMainLoop();	// this actually gets things going. This will not return.
 }

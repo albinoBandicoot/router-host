@@ -1,3 +1,4 @@
+/* command.h - defining command initializers and gcode parser */
 #ifndef COMMAND_H
 #define COMMAND_H
 
