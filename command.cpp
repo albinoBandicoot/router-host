@@ -3,11 +3,11 @@
 #include <climits>
 using namespace std;
 
-/* A command is COM_SIZE (currently 11) bytes. 
+/* A command is COM_SIZE (currently 20) bytes. 
 *  The first byte is the "opcode" signifying which command this is (move, wait, etc.)
-*  The second byte is a command ID number.
-*  Then come 8 bytes of data. Not all commands utilize all of this space.
-*  Finally the last byte is the checksum, which is just the XOR of all of the first 10 bytes.
+*  The next two bytes form a command ID number, big endian.
+*  Then come 16 bytes of data. Not all commands utilize all of this space.
+*  Finally the last byte is the checksum, which is just the XOR of all of the first 19 bytes.
 */
 
 /* ACHTUNG! multi-byte fields are stored in a command in BIG ENDIAN order, which is probably
@@ -25,71 +25,79 @@ void checksum (command_t *c) {
 	c->bytes[COM_SIZE-1] = cs;
 }
 
+void getfloat (uchar *p, float f) {
+	uchar *src = (uchar *) &f;
+	p[0] = src[3];
+	p[1] = src[2];
+	p[2] = src[1];
+	p[3] = src[0];
+}
+
 /* These are various functions for initializing a command_t. They correspond to the various
 *  arrangements of data that occur for different command types. */
 
 // initialize a command with no data - just a opcode, id, and checksum.
-command_t cmd_init (char op, char id) {
+command_t cmd_init (char op, unsigned short id) {
 	command_t c;
 	memset (c.bytes, 0, COM_SIZE);
 	c.bytes[0] = op;
-	c.bytes[1] = id;
+	c.bytes[1] = (uchar) id >> 8;
+	c.bytes[2] = (uchar) id;
 	checksum (&c);
 	return c;
 }
 
 // create a command with one byte of data
-command_t cmd_initb (char op, char id, char b) {
+command_t cmd_initb (char op, unsigned short id, char b) {
 	command_t c = cmd_init (op, id);
-	c.bytes[2] = b;
+	c.bytes[3] = b;
 	checksum (&c);
 	return c;
 }
 
 // create a command with one 2-byte integer field. 
-command_t cmd_inits (char op, char id, unsigned short x) {
+command_t cmd_inits (char op, unsigned short id, unsigned short x) {
 	command_t c = cmd_init (op, id);
-	c.bytes[2] = x >> 8;
-	c.bytes[3] = x;
+	c.bytes[3] = x >> 8;
+	c.bytes[4] = x;
 	checksum (&c);
 	return c;
 }
 
 // create a command with two 2-byte integer fields.
-command_t cmd_init2s (char op, char id, unsigned short x, unsigned short y) {
+command_t cmd_init2s (char op, unsigned short id, unsigned short x, unsigned short y) {
 	command_t c = cmd_init (op, id);
-	c.bytes[2] = x >> 8;
-	c.bytes[3] = x;
-	c.bytes[4] = y >> 8;
-	c.bytes[5] = y;
+	c.bytes[3] = x >> 8;
+	c.bytes[4] = x;
+	c.bytes[5] = y >> 8;
+	c.bytes[6] = y;
 	checksum (&c);
 	return c;
 }
 
-/* create a command with four 2-byte fixed point (integer) fields computed
-* from four floating point values. This compaction is probably unnecessary,
-* though it does nearly halve the amount of data that must be transmitted over
-* the serial port. 
-*
-* The floating point values are in mm (or mm/sec for feeds). To compute the fixed
-* point values, multiply by 100 and convert to an integer. This gives a resolution
-* of 0.01mm and a representable range of from 0 to 655.36mm (or from -327.68 to +327.67
-* mm for relative moves)
-*/
-command_t cmd_init4f (char op, char id, float x, float y, float z, float f) {
+command_t cmd_initf (char op, unsigned short id, float a) {
 	command_t c = cmd_init (op, id);
-	uint16_t xi = (uint16_t) (x*100);
-	uint16_t yi = (uint16_t) (y*100);
-	uint16_t zi = (uint16_t) (z*100);
-	uint16_t fi = (uint16_t) (f*100);
-	c.bytes[2] = xi >> 8;
-	c.bytes[3] = xi;
-	c.bytes[4] = yi >> 8;
-	c.bytes[5] = yi;
-	c.bytes[6] = zi >> 8;
-	c.bytes[7] = zi;
-	c.bytes[8] = fi >> 8;
-	c.bytes[9] = fi;
+	getfloat (&c.bytes[3], a);
+	checksum (&c);
+	return c;
+}
+
+command_t cmd_init3fb (char op, unsigned short id, float a, float b, float c, char d) {
+	command_t x = cmd_init (op, id);
+	getfloat (&x.bytes[3], a);
+	getfloat (&x.bytes[7], b);
+	getfloat (&x.bytes[11], c);
+	x.bytes[15] = d;
+	checksum (&x);
+	return x;
+}
+
+command_t cmd_init4f (char op, unsigned short id, float x, float y, float z, float f) {
+	command_t c = cmd_init (op, id);
+	getfloat (&c.bytes[3], x);
+	getfloat (&c.bytes[7], y);
+	getfloat (&c.bytes[11], z);
+	getfloat (&c.bytes[15], f);
 	checksum (&c);
 	return c;
 }
@@ -113,6 +121,9 @@ void error (int line, const char *message) {
 	err++;
 }
 
+#define N_OPS 33
+char *ops[] = {"noop", "mova", "movr", "marc", "mhlx", "home", "clwo", "swox", "swoy", "crot", "srot", "edgx", "edgy", "efmx", "efmy", "ef2x", "ef2y", "stpe", "stpd", "spne", "spnd", "ssps", "wait", "wusr", "beep", "qpos", "qabs", "qwor", "qrot", "qend", "qsps", "echo", "stop"};
+
 // the main parsing routine. It's a bit of a mess of pointer manipulation and 
 // calls to C library routines with names with no vowels like strspn and strchr
 
@@ -128,7 +139,7 @@ vector<command_t> parse_gcode (char *s, Textscroller *gcode) {
 	char *end = s + strlen(s);	// points to the end of the input string
 	char *lbp;	// linebreak pointer - will point to the end of the current line
 	int line = 0;
-	uchar id = 0;
+	unsigned short id = 0;
 	do {
 		line++;
 		id = cmd.size();
@@ -139,172 +150,89 @@ vector<command_t> parse_gcode (char *s, Textscroller *gcode) {
 			gcode->append_line (string (s, (size_t) (lbp-s)));
 		}
 
-		// now s points to start of line, lbp points to ending newline or null terminator
-		s += strspn (s, " \t");	// skip whitespace
-		if (*s == 'G') {
-			long op = strtol (s+1, &s, 10);
-			if (op == 1 || op == 2) {			// move
-				bool absolute = op == 1;
-				float tx = absolute ? x : 0;
-				float ty = absolute ? y : 0;
-				float tz = absolute ? z : 0;
-				float tf = f;
-				while (s != lbp && *s != ';') {
-					s += strspn (s, " \t");
-					char axis = *s;
-					float val = strtof (s+1, &s);
-					s += strspn (s, " \t");	// takes care of end-of-line whitespace
-					printf ("axis = %c, val = %f\n", axis, val);
-					if (val < 0) {
-						error (line, "Negative numbers don't exist.");
-					}
-					switch (axis) {
-						case 'X':
-							tx = val;	break;
-						case 'Y':
-							ty = val;	break;
-						case 'Z':
-							tz = val;	break;
-						case 'F':
-							tf = val;	break;
-						default:
-							error (line, "Expecting either X#, Y#, Z#, or F# as arguments to G1 or G2");
-					}
-				}
-				x = absolute ? tx : x + tx;
-				y = absolute ? ty : y + ty;
-				z = absolute ? tz : z + tz;
-				f = tf;
-				if (absolute) {
-					cmd.push_back (cmd_init4f (MOVE, id, x, y, z, f));
-				} else {
-					cmd.push_back (cmd_init4f (RELMOVE, id, tx, ty, tz, f));
-				}
-			} else if (op == 4) {	// wait
-				s = s + strspn (s, " \t");
-				switch (*s) {
-					case 'S':
-						cmd.push_back (cmd_inits (WAIT, id, (uint16_t) (1000 * strtol (s+1, NULL, 10))));
-						break;
-					case 'P':
-						cmd.push_back (cmd_inits (WAIT, id, (uint16_t) strtol (s+1, NULL, 10)));
-						break;
-					case 'M':
-						cmd.push_back (cmd_initb (PAUSE, id, (uchar) strtol (s+1, NULL, 10)));
-						break;
-					default:
-						error (line, "Expecting either S#, P#, or M# after G4 - wait");
-				}
-
-			} else if (op == 28) {	// home
-				bool axes[3] = {false, false, false};
-				char *q = s + strspn (s, " \t");
-				if (q == lbp || *q == ';') {
-					axes[0] = true;
-					axes[1] = true;
-					axes[2] = true;
-				} else {
-					while (*q >= 'X' && *q <= 'Z') {
-						axes[*q - 'X'] = true;
-						q++;
-					}
-				}
-				uchar mask = 0;
-				for (int i=0; i < 3; i++) {
-					if (axes[i]) mask |= (1 << i);
-				}
-				cmd.push_back (cmd_initb (HOME, id, mask));
-
-			} else if (op == 92) {	// set position
-				float tx = x;
-				float ty = y;
-				float tz = z;
-				while (s != lbp && *s != ';') {
-					s += strspn (s, " \t");
-					char axis = *s;
-					float val = strtof (s+1, &s);
-					s += strspn (s, " \t");	// takes care of end-of-line whitespace
-					if (val < 0) {
-						error (line, "Negative numbers don't exist.");
-					}
-					switch (axis) {
-						case 'X':
-							tx = val;	break;
-						case 'Y':
-							ty = val;	break;
-						case 'Z':
-							tz = val;	break;
-						default:
-							error (line, "Expecting either X#, Y#, or Z# as arguments to G92 - set position");
-					}
-				}
-				x = tx;
-				y = ty;
-				z = tz;
-				cmd.push_back (cmd_init4f (SET_POSITION, id, x, y, z, 0));
-			} else {	//error
-				error (line, "Unrecognized G#.");
+		s += strspn (s, " \t");	// skip leading whitespace
+		// first 4 characters of the line are always the opcode
+		int opcode = -1;
+		for (int i=0; i < N_OPS; i++) {
+			if (strncasecmp (s, ops[i], 4) == 0) {
+				opcode = i;
+				break;
 			}
-
-		} else if (*s == 'M') {
-			long op = strtol (s+1, &s, 10);
-			if (op == 0) {	// graceful stop
-				cmd.push_back (cmd_initb (SPINDLE_ONOFF, id, 0));
-				cmd.push_back (cmd_initb (HOME, (uchar) (id+1), 4));	// Z axis home
-				cmd.push_back (cmd_initb (STEPPERS_ONOFF, (uchar) (id+2), 0));
-				id += 2;
-			} else if (op == 1) {	// echo
-				command_t c = cmd_init (ECHO, id);
-				s++;	// advance past the space.
-				int i = 2;
-				while (s < lbp && i < COM_SIZE) {
-					c.bytes[i++] = *s;
-					s++;
-				}
-				checksum (&c);
-				cmd.push_back (c);
-
-			} else if (op == 17 || op == 18) {	// enable/disable steppers
-				cmd.push_back (cmd_initb (STEPPERS_ONOFF, id, 18-op));
-			} else if (op == 112) {	// estop
-				cmd.push_back (cmd_init (ESTOP, id));
-			} else if (op == 114) {	// get position
-				cmd.push_back (cmd_init (GET_POSITION, id));
-			} else if (op == 119) {	// get endstop status
-				cmd.push_back (cmd_init (GET_ENDSTOPS, id));
-			} else if (op == 300) {	// beep
-				int len = DEFAULT_BEEP_LEN;
-				int freq = DEFAULT_BEEP_FREQ;
-				s += strspn (s, " \t");	// skip whitespace
-				while (s != lbp && *s != ';') {
-					if (*s == 'S') {
-						freq = (int) strtod (s+1, &s);
-					} else if (*s == 'P') {
-						len = (int) strtod (s+1, &s);
+		}
+		if (opcode == -1) {
+			error (line, "Bad opcode!");
+		} else if (opcode == N_OPS - 1) {
+			opcode = 255;	// STOP
+		}
+		int homeaxes = 0;
+		switch (opcode) {
+			case MOVA:
+			case MOVR:
+			case MARC:
+			case MHLX:
+				cmd.push_back (cmd_init4f (opcode, id++, strtof (s, &s), strtof(s, &s), strtof(s, &s), strtof(s, &s)));
+				break;
+			case HOME:
+				homeaxes = 0;
+				while (s < lbp) {
+					if (s[0] == 'x') {
+						homeaxes |= 1;
+					} else if (s[0] == 'y') {
+						homeaxes |= 2;
+					} else if (s[0] == 'z') {
+						homeaxes |= 4;
 					} else {
-						error (line, "Invalid argument to M300 - beep");
+						break;
 					}
-					s += strspn (s, " \t");
 				}
-				if (freq > 15000) {
-					warning (line, "Beep with frequency greater than 15000 Hz unsupported. Using 15 KHz.");
-					freq = 15000;
-				}
-				cmd.push_back (cmd_init2s (BEEP, id, freq, len));
-			} else {	//error
-				error (line, "Unrecognized M-number.");
-			}
-		} else if (*s == ';') {	// semicolon indicates comments
-		} else {
-			if (lbp != end) {
-				error (line, "Lines should start with 'G' or 'M'");
-			}
+				cmd.push_back (cmd_initb (opcode, id++, (unsigned char) homeaxes));
+				break;
+			case SWOX:
+			case SWOY:
+			case SROT:
+			case EDGX:
+			case EDGY:
+				cmd.push_back (cmd_initf (opcode, id++, strtof (s, &s)));
+				break;
+			case EFMX:
+			case EFMY:
+			case EF2X:
+			case EF2Y:
+				cmd.push_back (cmd_init3fb (opcode, id++, strtof (s, &s), strtof(s, &s), strtof(s, &s), (char) strtol (s, &s, 10)));
+				break;
+			case NOOP:
+			case CLWO:
+			case CROT:
+			case STPE:
+			case STPD:
+			case SPNE:
+			case SPND:
+			case QPOS:
+			case QABS:
+			case QWOR:
+			case QROT:
+			case QEND:
+			case QSPS:
+			case STOP:
+				cmd.push_back (cmd_init (opcode, id++));
+				break;
+			case SSPS:
+			case WAIT:
+				cmd.push_back (cmd_inits (opcode, id++, (unsigned short) strtol (s, &s, 10)));
+				break;
+			case WUSR:
+				cmd.push_back (cmd_initb (opcode, id++, (unsigned char) strtol (s, &s, 10)));
+				break;
+			case BEEP:
+				cmd.push_back (cmd_init2s (opcode, id++, (unsigned short) strtol (s, &s, 10), (unsigned short) strtol (s, &s, 10)));
+				break;
+			case ECHO:
+				// do something
+				break;
 		}
 		s = lbp + 1;
 	} while (lbp != end);
-
 	return cmd;
-
 }
 
 void cmd_println (command_t c) {

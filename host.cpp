@@ -149,17 +149,17 @@ void moveaxis_callback (Component *c, int b, int s) {
 	float amt = amounts[sel];
 	float feed = FEEDRATES[fsel];
 	if (c == &xdown) {
-		iocore_run_manual (cmd_init4f (RELMOVE, 0, -amt, 0, 0, feed));
+		iocore_run_manual (cmd_init4f (MOVR, 0, -amt, 0, 0, feed));
 	} else if (c == &xup) {
-		iocore_run_manual (cmd_init4f (RELMOVE, 0, amt, 0, 0,  feed));
+		iocore_run_manual (cmd_init4f (MOVR, 0, amt, 0, 0,  feed));
 	} else if (c == &ydown) {
-		iocore_run_manual (cmd_init4f (RELMOVE, 0, 0, -amt, 0, feed));
+		iocore_run_manual (cmd_init4f (MOVR, 0, 0, -amt, 0, feed));
 	} else if (c == &yup) {
-		iocore_run_manual (cmd_init4f (RELMOVE, 0, 0, amt, 0,  feed));
+		iocore_run_manual (cmd_init4f (MOVR, 0, 0, amt, 0,  feed));
 	} else if (c == &zdown) {
-		iocore_run_manual (cmd_init4f (RELMOVE, 0, 0, 0, -amt, feed));
+		iocore_run_manual (cmd_init4f (MOVR, 0, 0, 0, -amt, feed));
 	} else if (c == &zup) {
-		iocore_run_manual (cmd_init4f (RELMOVE, 0, 0, 0, amt,  feed));
+		iocore_run_manual (cmd_init4f (MOVR, 0, 0, 0, amt,  feed));
 	}
 }
 

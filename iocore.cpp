@@ -304,13 +304,13 @@ void print_response () {
 	uchar r0 = response_buffer[0];
 	char buf[200];
 	switch (ct) {
-		case GET_POSITION:
+		case QPOS:
 			sprintf (buf, "X: %f   Y: %f   Z: %f", get16(0) * 0.01f, get16(1) * 0.01f, get16(2) * 0.01f);
 			break;
-		case GET_ENDSTOPS:
+		case QEND:
 			sprintf (buf, "Endstops: X: %d  Y: %d  Z: %d", r0 & 1, (r0 & 2) >> 1, (r0 & 4) >> 2);
 			break;
-		case GET_SPINDLE_SPEED:
+		case QSPS:
 			sprintf (buf, "Spindle speed: %d rpm", (int) (SP_SPEED_MIN + (get16(1) / 1024.0f) * (SP_SPEED_MAX - SP_SPEED_MIN)));
 			break;
 		case ECHO:

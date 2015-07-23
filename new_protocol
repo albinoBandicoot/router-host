@@ -1,0 +1,115 @@
+The general protocol is the same; command format is different, and there are some new commands.
+
+Commands are 20 bytes: 1 byte opcode, 2 byte command #, 16 bytes data, 1 byte checksum
+
+Feedrates: when a command specifies a feedrate, the rate will start at the current feedrate and increase linearly
+to the target (specified) feedrate at the end of the move. Changing feedrate abruptly is best done with 'movr 0 0 0 F'
+
+Motion planning is done in the host. 
+
+
+(nop)
+
+mova	X Y Z F		(floats, mm)
+	absolute move. Coordinates will be transformed by the skew adjustment, working origin, and rotation adjustment if set.
+
+movr	X Y Z F		(floats, mm)
+	relative move.
+
+marc	rad start_theta dtheta F (floats)
+	move in an arc, specified by the polar coordinates of the current location relative to the arc center (rad, start_theta),
+	and the target by dtheta. F is feedrate as usual. Let's just say it will be interesting to see how this interacts with
+	skew and rotation correction. Angles are in degrees.
+
+mhlx	rad start_theta dtheta lead (floats)
+	for helical milling. Like marc but Changes Z by (lead) for every full revolution. No room for a feedrate - uses current.
+
+home	xyz  (1 byte int: .....ZYX)
+	home axes. This will clear the working origin (for those axes).
+
+clwo
+	clear the working origin
+
+swox	X	(float, mm)
+	sets working origin x-coordinate to current position + X offset
+
+swoy	Y	(float, mm)
+	sets working origin y-coordinate to current position + Y offset
+
+crot
+	clears the rotation correction
+
+srot
+	sets the rotation correction
+
+edgx	max_travel	(float, mm)
+	edgefind on x axis. Effectively a relative move on X by max_travel that aborts when the edgefinder hits
+	will typically be followed by a swx
+
+edgy	max_travel
+
+efmx	max_travel1 max_travel2 length (floats, mm) zlift (boolean)
+	edgefind the midpoint. This does two edgefinding operations; first it does the same thing as edgx, and notes
+	the position. Then it lifts the Z, moves length mm, lowers the Z,  and approaches from the other direction 
+	(upto max_travel). It will then lift Z and move to the center point.
+
+efmy	max_travel1 max_travel2 length zlift
+
+ef2x	max_travel backoff length zlift
+	NOTE: the X here refers to the long axis - this moves the Y axis when doing the actual edgefind!
+	2-point edgefinding for determining part rotation. Edgefinds Y once at current X position. Backs Y off by
+	backoff, Lifts Z (if zlift set), moves length mm along X, (lowers Z) and edgefinds again. 
+
+ef2y	max_travel backoff length zlift
+
+stpe
+	enable steppers
+
+stpd
+	disable steppers
+
+spne
+	enable spindle
+
+spnd
+	disable spindle
+
+ssps	rpm (2 byte int)
+	sets the spindle to run at (rpm). If we have a digipot, uses that. Otherwise, waits until the user 
+	has adjusted the potentiometer correctly.
+
+wait	ms (2 byte int)
+
+wusr	mesgnum (1 byte)
+	"wait for user": wait until the resume button is pressed. useful for changing setups/tools
+
+beep	hz ms (2 byte ints)
+
+qpos
+	query position. Returns the position of the router relative to the working origin, including skew & rotation corrections.
+
+qabs
+	query absolute position. Returns the real, honest to goodness position of the router with no corrections. 
+
+qwor
+	query working origin.
+
+qrot
+	query the rotation correction.
+
+qend
+	query the endstops
+
+qsps
+	query the spindle speed (potentiometer setting)
+
+echo 	len (1 byte)  str (upto 15 bytes)
+
+stop
+	stop everything. like the old ESTOP command (kills spindle and steppers, sends 'A' to host, ignores serial until resume pressed, then sends 'C')
+
+
+
+
+
+	
