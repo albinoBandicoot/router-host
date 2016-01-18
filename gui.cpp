@@ -20,11 +20,6 @@ Image::Image (FILE *f) {
 
 // Component functions
 
-void Component::render () {
-}
-Component* Component::clicked (int b, int s, int x, int y) {
-}
-
 // Container functions
 
 void Container::render () {

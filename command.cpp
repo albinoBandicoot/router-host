@@ -102,6 +102,21 @@ command_t cmd_init4f (char op, unsigned short id, float x, float y, float z, flo
 	return c;
 }
 
+command_t cmd_init_str (char op, unsigned short id, char *s, char *e) {
+	if (e - s > COM_STRLEN_MAX) {
+		printf ("Warning: echo string too long (can only fit %d bytes)", COM_STRLEN_MAX);
+		e = s + COM_STRLEN_MAX;
+	}
+	command_t c = cmd_init (op, id);
+	int i = COM_DATA_START;
+	while (s < e) {
+		c.bytes[i++] = *s;
+		s++;
+	}
+	checksum (&c);
+	return c;
+}
+
 /* Now for the Gcode parsing. This will take a string and attempt to convert it
 * into a list of command_t. */
 
@@ -122,7 +137,7 @@ void error (int line, const char *message) {
 }
 
 #define N_OPS 33
-char *ops[] = {"noop", "mova", "movr", "marc", "mhlx", "home", "clwo", "swox", "swoy", "crot", "srot", "edgx", "edgy", "efmx", "efmy", "ef2x", "ef2y", "stpe", "stpd", "spne", "spnd", "ssps", "wait", "wusr", "beep", "qpos", "qabs", "qwor", "qrot", "qend", "qsps", "echo", "stop"};
+const char *ops[] = {"noop", "mova", "movr", "marc", "mhlx", "home", "clwo", "swox", "swoy", "crot", "srot", "edgx", "edgy", "efmx", "efmy", "ef2x", "ef2y", "stpe", "stpd", "spne", "spnd", "ssps", "wait", "wusr", "beep", "qpos", "qabs", "qwor", "qrot", "qend", "qsps", "echo", "stop"};
 
 // the main parsing routine. It's a bit of a mess of pointer manipulation and 
 // calls to C library routines with names with no vowels like strspn and strchr
@@ -184,6 +199,7 @@ vector<command_t> parse_gcode (char *s, Textscroller *gcode) {
 					} else {
 						break;
 					}
+					s++;
 				}
 				cmd.push_back (cmd_initb (opcode, id++, (unsigned char) homeaxes));
 				break;
@@ -227,7 +243,7 @@ vector<command_t> parse_gcode (char *s, Textscroller *gcode) {
 				cmd.push_back (cmd_init2s (opcode, id++, (unsigned short) strtol (s, &s, 10), (unsigned short) strtol (s, &s, 10)));
 				break;
 			case ECHO:
-				// do something
+				cmd.push_back (cmd_init_str (opcode, id++, s, lbp));
 				break;
 		}
 		s = lbp + 1;

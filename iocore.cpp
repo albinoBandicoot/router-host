@@ -37,7 +37,7 @@ void iocore_disconnect () {
 	if (connection == CONNECTED) {
 		if (!running) {
 			connection = DISCONNECTED;
-			serialport_close (spfd) == 0;
+			serialport_close (spfd);
 		} else {
 			console_append ("Can't disconnect while running.");
 		}
@@ -272,7 +272,7 @@ void retransmit () {
 	console_append ("Retransmitting command");
 	cmd_println (sent[0]);
 
-	serialport_write (spfd, &(sent[0].bytes), 11);
+	serialport_write (spfd, &(sent[0].bytes), COM_SIZE);
 }
 
 

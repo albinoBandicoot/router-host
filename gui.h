@@ -44,8 +44,9 @@ class Component {
 			glutPostRedisplay();	// maybe amalgamate these somewhere nicer? Or just rely on GLUT to do that
 		}
 
-		virtual void render ();
-		virtual Component* clicked (int button, int state, int x, int y);
+		virtual void render () = 0;
+		/* This returns the component with focus, or NULL if unchanged */
+		virtual Component* clicked (int button, int state, int x, int y) = 0;
 		virtual void keypress (unsigned char c) {}
 };
 

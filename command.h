@@ -8,6 +8,8 @@
 #include <string>
 
 #define COM_SIZE 20
+#define COM_DATA_START 3
+#define COM_STRLEN_MAX 15
 
 typedef unsigned char uchar;
 typedef struct {
@@ -29,6 +31,6 @@ command_t cmd_init2s (char op, unsigned short id, unsigned short, unsigned short
 command_t cmd_initf  (char op, unsigned short id, float);
 command_t cmd_init3fb (char op, unsigned short id, float a, float b, float c, char d);
 command_t cmd_init4f (char op, unsigned short id, float, float, float, float);
-
+command_t cmd_init_str (char op, unsigned short id, char *start, char *end);
 
 #endif
